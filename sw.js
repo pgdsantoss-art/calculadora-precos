@@ -1,4 +1,4 @@
-const CACHE = 'bdl-v2';
+const CACHE = 'bdl-v3';
 const FILES = ['./', 'index.html', 'config.js', 'manifest.json', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

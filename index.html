@@ -115,7 +115,10 @@
       <div class="sub" style="text-transform:uppercase;letter-spacing:.1em">Preço final de venda</div>
       <div class="big" id="final">—</div>
       <div class="sub" id="perUnit"></div>
-      <button class="btn bg" id="save" style="width:100%;padding:13px;font-size:1rem;margin-top:14px">💾 Guardar receita e exportar Excel</button>
+      <button class="btn bg" id="save" style="width:100%;padding:13px;font-size:1rem;margin-top:14px">💾 Guardar receita</button>
+      <label style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;text-transform:none;letter-spacing:0;font-size:.82rem;cursor:pointer">
+        <input type="checkbox" id="chkExcel" checked style="width:auto"> Descarregar também o Excel desta receita
+      </label>
     </div>
   </div>
 
@@ -147,6 +150,7 @@ function store(key, v){ try { localStorage.setItem(key, JSON.stringify(v)); } ca
 
 let cat  = load('bdl_cat', {ings:[], prods:[]});
 let hist = load('bdl_hist', []);
+let pend = load('bdl_pend', []);   // receitas ainda por enviar para a Drive
 let rec  = newRec();
 
 function newRec(){ return {id:null, name:'Nova receita', serv:1, ings:[], prods:[], exps:[], margin:30}; }
@@ -247,8 +251,48 @@ function importFile(file){
 }
 
 function setStatus(){
-  $('status').textContent = cat.updated
+  let s = cat.updated
     ? 'Preços atualizados em ' + new Date(cat.updated).toLocaleString('pt-PT', {dateStyle:'short', timeStyle:'short'}) : '';
+  if(driveOn()) s += (s ? ' · ' : '') + '☁ Drive ligada' + (pend.length ? ' (' + pend.length + ' por enviar)' : '');
+  $('status').textContent = s;
+}
+
+/* ---------- Ligação à Drive (Google Apps Script) ---------- */
+function driveOn(){ return !!(CFG.DRIVE_URL && /^https:\/\/script\.google\.com\//.test(CFG.DRIVE_URL) && CFG.DRIVE_KEY); }
+async function driveCall(body){
+  const r = await fetch(CFG.DRIVE_URL, {
+    method: 'POST',
+    headers: {'Content-Type': 'text/plain;charset=utf-8'},   // evita pré-verificação (CORS)
+    body: JSON.stringify({key: CFG.DRIVE_KEY, ...body})
+  });
+  const j = await r.json();
+  if(!j.ok) throw new Error(j.erro || 'erro na Drive');
+  return j;
+}
+function payloadOf(r){
+  const t = totalsOf(r);
+  return {
+    id: r.id, name: r.name, date: r.date, serv: r.serv, margin: num(r.margin),
+    ings: r.ings.map(i => ({nome: i.nome, qty: i.qty, un: i.un, total: i.qty * i.ppu})),
+    prods: r.prods.map(p => ({nome: p.nome, qty: p.qty, un: p.un, total: p.qty * p.pu})),
+    exps: (r.exps || []).map(e => ({label: e.label, value: num(e.value), mode: e.mode || 'eur', total: expAmount(e, t.ing)})),
+    t
+  };
+}
+let syncing = false;
+async function syncPending(){
+  if(!driveOn() || syncing || !pend.length) return {ok: 0, fail: 0};
+  syncing = true;
+  let ok = 0, fail = 0;
+  try{
+    for(const id of [...pend]){
+      const r = hist.find(h => h.id === id);
+      if(!r){ pend = pend.filter(x => x !== id); continue; }
+      try{ await driveCall({action: 'save', recipe: payloadOf(r)}); pend = pend.filter(x => x !== id); ok++; }
+      catch(e){ console.error(e); fail++; break; }
+    }
+  } finally { syncing = false; store('bdl_pend', pend); setStatus(); }
+  return {ok, fail};
 }
 
 /* ---------- Listas pendentes ---------- */
@@ -580,19 +624,30 @@ async function exportPretty(r, t){
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-function saveRec(){
+async function saveRec(){
   const t = totals();
   const saved = {...JSON.parse(JSON.stringify(rec)), id: rec.id || uid(), date: new Date().toLocaleDateString('pt-PT'), final: t.final};
   rec.id = saved.id;
   const idx = hist.findIndex(h => h.id === saved.id);
   if(idx >= 0) hist[idx] = saved; else hist.unshift(saved);
   store('bdl_hist', hist); renderHist(); render();
-  exportPretty(saved, t).then(() => toast('✓ Receita guardada e Excel descarregado'))
-    .catch(e => {
+  let msg = '✓ Receita guardada';
+  if($('chkExcel').checked){
+    try { await exportPretty(saved, t); msg += ' · Excel descarregado'; }
+    catch(e){
       console.error(e);
-      try { exportXlsx(saved, t); toast('✓ Receita guardada e Excel descarregado (formato simples)'); }
-      catch(_){ toast('Receita guardada, mas o Excel não foi descarregado.'); }
-    });
+      try { exportXlsx(saved, t); msg += ' · Excel descarregado (formato simples)'; }
+      catch(_){ msg += ' · o Excel não foi descarregado'; }
+    }
+  }
+  if(driveOn()){
+    if(!pend.includes(saved.id)) pend.push(saved.id);
+    store('bdl_pend', pend); setStatus();
+    toast(msg + ' · a enviar para a Drive…');
+    const res = await syncPending();
+    msg += res.fail || pend.length ? ' · Drive: sem ligação, fica por enviar' : ' · enviada para a Drive';
+  }
+  toast(msg);
 }
 
 /* ---------- Eventos ---------- */
@@ -647,7 +702,16 @@ $('hist').addEventListener('click', e => {
   const d = e.target.closest('[data-hdel]');
   if(d){
     e.stopPropagation();
-    if(confirm('Apagar esta receita do histórico?')){ hist = hist.filter(h=>h.id!==d.dataset.hdel); store('bdl_hist', hist); renderHist(); render(); }
+    if(confirm('Apagar esta receita do histórico?')){
+      const id = d.dataset.hdel;
+      hist = hist.filter(h=>h.id!==id); store('bdl_hist', hist);
+      pend = pend.filter(x => x !== id); store('bdl_pend', pend);
+      renderHist(); render(); setStatus();
+      if(driveOn() && confirm('Apagar também esta receita do ficheiro na Drive?')){
+        driveCall({action: 'delete', id}).then(() => toast('✓ Receita apagada também na Drive'))
+          .catch(() => toast('Não consegui apagar na Drive. Apaga a folha à mão no ficheiro da Drive.'));
+      }
+    }
     return;
   }
   const o = e.target.closest('[data-open]');
@@ -669,6 +733,8 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dat
 
 fillSelects(); render(); renderHist(); setStatus();
 refreshFromSheet(true);   // ao abrir, vai buscar os preços mais recentes
+syncPending();            // envia para a Drive o que ficou por enviar
+window.addEventListener('online', () => syncPending());
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
 </body>
