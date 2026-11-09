@@ -13,7 +13,7 @@ window.CONFIG = {
   // Guardar as receitas automaticamente na Drive.
   // Cola aqui, entre as aspas, o "URL da aplicação Web" que o Google te deu
   // (começa por https://script.google.com/...). Deixa vazio para desligar.
-  DRIVE_URL: "",
+  DRIVE_URL: "https://script.google.com/macros/s/AKfycbxFK1oFEmqhA7QAynbFnkiB8acj_sESKLzgqXVPqf31R13WZy_8VCGjSPTUWsHJSdwh/exec",
   // Senha da ligação (tem de ser igual à do código no Google). Já vem preenchida.
   DRIVE_KEY: "Ar6ZJnRt3pfHJTKqiVM3-Xpf",
 
