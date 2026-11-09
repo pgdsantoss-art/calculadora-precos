@@ -259,10 +259,12 @@ function fillSelects(){
 }
 
 /* ---------- Cálculos e ecrã ---------- */
+// Despesa fixa: valor em € ou percentagem do custo dos ingredientes
+function expAmount(e, ingTotal){ return e.mode === 'pct' ? ingTotal * num(e.value) / 100 : num(e.value); }
 function totals(){
   const ing = rec.ings.reduce((s,i)=>s + i.qty*i.ppu, 0);
   const prod = rec.prods.reduce((s,p)=>s + p.qty*p.pu, 0);
-  const exp = rec.exps.reduce((s,e)=>s + num(e.value), 0);
+  const exp = rec.exps.reduce((s,e)=>s + expAmount(e, ing), 0);
   const cost = ing + prod + exp;
   return {ing, prod, exp, cost, final: cost*(1 + num(rec.margin)/100)};
 }
@@ -285,8 +287,9 @@ function render(){
 
   $('listExp').innerHTML = rec.exps.length ? rec.exps.map(e => `
     <div class="item"><input class="grow" style="flex:1" value="${esc(e.label)}" placeholder="Ex: eletricidade" data-k="explabel" data-id="${e.id}">
-      <input type="number" min="0" step="0.01" inputmode="decimal" style="width:100px" value="${e.value}" data-k="expval" data-id="${e.id}">
-      <span class="idet">€</span>
+      <input type="number" min="0" step="0.01" inputmode="decimal" style="width:90px" value="${e.value}" data-k="expval" data-id="${e.id}">
+      <select style="width:110px" data-k="expmode" data-id="${e.id}"><option value="eur"${e.mode === 'pct' ? '' : ' selected'}>€</option><option value="pct"${e.mode === 'pct' ? ' selected' : ''}>% ingredientes</option></select>
+      <span class="price">${eur(expAmount(e, totals().ing))}</span>
       <button class="btn bd" data-del="exp" data-id="${e.id}">✕</button></div>`).join('')
     + `<div class="tot">Total: ${eur(totals().exp)}</div>` : '<div class="empty">Sem despesas fixas</div>';
 
@@ -325,8 +328,8 @@ function exportXlsx(r, t){
     ...r.ings.map(i => [i.nome, i.qty, i.un, +(i.qty*i.ppu).toFixed(4)]), [],
     ['PRODUTOS'], ['Nome','Quantidade','Unidade','Preço (€)'],
     ...r.prods.map(p => [p.nome, p.qty, p.un, +(p.qty*p.pu).toFixed(4)]), [],
-    ['DESPESAS FIXAS'], ['Descrição','Valor (€)'],
-    ...r.exps.map(e => [e.label, num(e.value)]), [],
+    ['DESPESAS FIXAS'], ['Descrição','Tipo','Valor','Total (€)'],
+    ...r.exps.map(e => [e.label, e.mode === 'pct' ? '% dos ingredientes' : 'valor fixo (€)', num(e.value), +expAmount(e, t.ing).toFixed(2)]), [],
     ['Custo ingredientes', +t.ing.toFixed(2)], ['Custo produtos', +t.prod.toFixed(2)],
     ['Despesas fixas', +t.exp.toFixed(2)], ['Custo total', +t.cost.toFixed(2)],
     ['Margem de lucro (%)', num(r.margin)], ['PREÇO FINAL (€)', +t.final.toFixed(2)]
@@ -370,7 +373,7 @@ $('addProd').onclick = () => {
   rec.prods.push({id:uid(), nome:p.nome, qty:num($('qProd').value) || 1, un:p.un, pu:p.preco});
   $('selProd').value = ''; $('qProd').value = 1; render();
 };
-$('addExp').onclick = () => { rec.exps.push({id:uid(), label:'', value:0}); render(); };
+$('addExp').onclick = () => { rec.exps.push({id:uid(), label:'', value:0, mode:'eur'}); render(); };
 
 $('rname').oninput = e => rec.name = e.target.value;
 $('rserv').oninput = e => { rec.serv = Math.max(1, parseInt(e.target.value) || 1); updateTotals(); };
@@ -382,6 +385,7 @@ $('calc').addEventListener('change', e => {
   if(k === 'prod') rec.prods.find(x=>x.id===id).qty = num(e.target.value);
   if(k === 'expval')   rec.exps.find(x=>x.id===id).value = num(e.target.value);
   if(k === 'explabel') rec.exps.find(x=>x.id===id).label = e.target.value;
+  if(k === 'expmode')  rec.exps.find(x=>x.id===id).mode = e.target.value;
   render();
 });
 $('calc').addEventListener('click', e => {
